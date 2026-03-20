@@ -100,22 +100,38 @@ class GitHubQueue(ITaskQueue):
             return []
 
         url = f"{self._repo_api_url(f'{self.org}/{self.repo}')}/issues"
-        params = {"labels": WorkItemStatus.QUEUED.value, "state": "open"}
+        params = {"labels": WorkItemStatus.QUEUED.value, "state": "open", "per_page": 100}
 
-        response = await self._client.get(url, params=params)
+        all_issues: list[dict] = []
+        page = 1
 
-        if response.status_code in (403, 429):
-            # Propagate rate-limit errors so the sentinel's backoff logic fires
-            response.raise_for_status()
+        while True:
+            params["page"] = page
+            response = await self._client.get(url, params=params)
 
-        if response.status_code != 200:
-            logger.error(f"GitHub API error: {response.status_code} {response.text[:200]}")
-            return []
+            if response.status_code in (403, 429):
+                # Propagate rate-limit errors so the sentinel's backoff logic fires
+                response.raise_for_status()
 
-        issues = response.json()
+            if response.status_code != 200:
+                logger.error(f"GitHub API error: {response.status_code} {response.text[:200]}")
+                break
+
+            issues = response.json()
+            if not issues:
+                break
+
+            all_issues.extend(issues)
+
+            # Check Link header for pagination info
+            link_header = response.headers.get("link", "")
+            if 'rel="next"' not in link_header:
+                break
+
+            page += 1
 
         work_items = []
-        for issue in issues:
+        for issue in all_issues:
             labels = [label["name"] for label in issue.get("labels", [])]
             task_type = TaskType.IMPLEMENT
             if "agent:plan" in labels or "[Plan]" in issue.get("title", ""):
@@ -217,7 +233,21 @@ class GitHubQueue(ITaskQueue):
                 )
                 return False
 
-        # Step 3: Update labels
+        # Step 3: Post claim comment with sentinel identifier FIRST
+        # This ensures other sentinels can see the claim marker before we update labels,
+        # preventing a race condition where two sentinels both verify label state
+        # and then both proceed with execution.
+        comment_url = f"{url_issue}/comments"
+        msg = (
+            f"🚀 **Sentinel {sentinel_id}** has claimed this task.\n"
+            f"- **Sentinel ID:** `{sentinel_id}`\n"
+            f"- **Start Time:** {datetime.now(UTC).isoformat()}\n"
+            f"- **Environment:** `devcontainer-opencode.sh` initializing...\n\n"
+            f"<!-- sentinel-claim: {sentinel_id} -->"
+        )
+        await self._client.post(comment_url, json={"body": msg})
+
+        # Step 4: Update labels
         url_labels = f"{url_issue}/labels"
         resp = await self._client.delete(f"{url_labels}/{WorkItemStatus.QUEUED.value}")
         if resp.status_code not in (200, 204, 404, 410):
@@ -228,17 +258,6 @@ class GitHubQueue(ITaskQueue):
             url_labels,
             json={"labels": [WorkItemStatus.IN_PROGRESS.value]},
         )
-
-        # Step 4: Post claim comment with sentinel identifier
-        comment_url = f"{url_issue}/comments"
-        msg = (
-            f"🚀 **Sentinel {sentinel_id}** has claimed this task.\n"
-            f"- **Sentinel ID:** `{sentinel_id}`\n"
-            f"- **Start Time:** {datetime.now(UTC).isoformat()}\n"
-            f"- **Environment:** `devcontainer-opencode.sh` initializing...\n\n"
-            f"<!-- sentinel-claim: {sentinel_id} -->"
-        )
-        await self._client.post(comment_url, json={"body": msg})
 
         logger.info(f"Successfully claimed Task #{item.issue_number}")
         return True
