@@ -162,6 +162,7 @@ tests/                    # Test suite
 
 ## Documentation
 
+- [AI Repository Summary](.ai-repository-summary.md) - Quick reference for AI coding agents
 - [Technology Stack](plan_docs/tech-stack.md)
 - [Architecture Guide](plan_docs/architecture.md)
 
