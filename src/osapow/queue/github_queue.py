@@ -49,6 +49,10 @@ class ITaskQueue(ABC):
 # --- Concrete Implementation: GitHub Issues ---
 
 
+# Default timeout for stale claim detection (in seconds)
+DEFAULT_CLAIM_STALE_TIMEOUT_SECS = 1800  # 30 minutes
+
+
 class GitHubQueue(ITaskQueue):
     """GitHub-backed work queue with connection pooling.
 
@@ -57,10 +61,17 @@ class GitHubQueue(ITaskQueue):
     token since it derives the repo from the webhook payload.
     """
 
-    def __init__(self, token: str, org: str = "", repo: str = ""):
+    def __init__(
+        self,
+        token: str,
+        org: str = "",
+        repo: str = "",
+        claim_stale_timeout_secs: int = DEFAULT_CLAIM_STALE_TIMEOUT_SECS,
+    ):
         self.token = token
         self.org = org
         self.repo = repo
+        self.claim_stale_timeout_secs = claim_stale_timeout_secs
         self.headers = {
             "Authorization": f"token {token}",
             "Accept": "application/vnd.github.v3+json",
@@ -175,6 +186,47 @@ class GitHubQueue(ITaskQueue):
 
     # --- Sentinel-specific methods ---
 
+    def _is_claim_stale(self, comment_body: str, comment: dict) -> bool:
+        """Check if a sentinel claim is stale based on timestamp.
+
+        A claim is considered stale if:
+        1. The claim's start time is older than claim_stale_timeout_secs, OR
+        2. We can't parse the timestamp (be conservative and treat as potentially stale)
+
+        Args:
+            comment_body: The body text of the claim comment
+            comment: The full comment object from GitHub API
+
+        Returns:
+            True if the claim should be considered stale and allow re-claiming
+        """
+        # Try to extract the Start Time from the claim comment
+        timestamp_match = re.search(r"\*\*Start Time:\*\*\s*`?([^`\n]+)`?", comment_body)
+        if timestamp_match:
+            try:
+                claim_time_str = timestamp_match.group(1).strip()
+                claim_time = datetime.fromisoformat(claim_time_str.replace("Z", "+00:00"))
+                elapsed = (datetime.now(UTC) - claim_time).total_seconds()
+                if elapsed > self.claim_stale_timeout_secs:
+                    return True
+            except (ValueError, TypeError) as e:
+                logger.debug(f"Could not parse claim timestamp: {e}")
+                # Fall back to comment's created_at timestamp
+                pass
+
+        # Fallback: use the comment's created_at timestamp from GitHub API
+        created_at_str = comment.get("created_at")
+        if created_at_str:
+            try:
+                comment_time = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+                elapsed = (datetime.now(UTC) - comment_time).total_seconds()
+                if elapsed > self.claim_stale_timeout_secs:
+                    return True
+            except (ValueError, TypeError) as e:
+                logger.debug(f"Could not parse comment created_at: {e}")
+
+        return False
+
     async def claim_task(self, item: WorkItem, sentinel_id: str, bot_login: str = "") -> bool:
         """Claim a task using assign-then-verify distributed locking.
 
@@ -221,11 +273,21 @@ class GitHubQueue(ITaskQueue):
                             if match:
                                 existing_sentinel = match.group(1)
                                 if existing_sentinel != sentinel_id:
-                                    logger.warning(
-                                        f"Lost race on #{item.issue_number} — "
-                                        f"already claimed by sentinel {existing_sentinel}"
-                                    )
-                                    return False
+                                    # Check if the claim is stale (older than timeout)
+                                    claim_is_stale = self._is_claim_stale(body, comment)
+                                    if claim_is_stale:
+                                        logger.warning(
+                                            f"Found stale claim on #{item.issue_number} from "
+                                            f"sentinel {existing_sentinel} — allowing re-claim"
+                                        )
+                                        # Continue to allow re-claiming
+                                        continue
+                                    else:
+                                        logger.warning(
+                                            f"Lost race on #{item.issue_number} — "
+                                            f"already claimed by sentinel {existing_sentinel}"
+                                        )
+                                        return False
             else:
                 logger.warning(
                     f"Could not verify assignment for #{item.issue_number}: "
@@ -254,10 +316,16 @@ class GitHubQueue(ITaskQueue):
             logger.error(f"Label removal failed: {resp.status_code}")
             return False
 
-        await self._client.post(
+        resp = await self._client.post(
             url_labels,
             json={"labels": [WorkItemStatus.IN_PROGRESS.value]},
         )
+        if resp.status_code not in (200, 201):
+            logger.error(
+                f"Failed to add {WorkItemStatus.IN_PROGRESS.value} label to "
+                f"#{item.issue_number}: {resp.status_code}"
+            )
+            return False
 
         logger.info(f"Successfully claimed Task #{item.issue_number}")
         return True
