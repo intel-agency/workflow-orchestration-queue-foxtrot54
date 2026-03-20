@@ -15,6 +15,7 @@ import os
 import random
 import signal
 import sys
+import uuid
 from datetime import UTC, datetime
 
 import httpx
@@ -253,10 +254,14 @@ async def main():
         )
         sys.exit(1)
 
+    # Generate unique sentinel ID for distributed locking
+    sentinel_id = f"sentinel-{uuid.uuid4().hex[:8]}"
+
     sentinel = SentinelOrchestrator(
         token=token,
         org=org,
         repo=repo,
+        sentinel_id=sentinel_id,
         bot_login=bot_login,
         poll_interval=poll_interval,
         heartbeat_interval=heartbeat_interval,

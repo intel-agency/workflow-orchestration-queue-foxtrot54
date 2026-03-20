@@ -64,8 +64,8 @@ class WebhookNotifier:
         with agent-related labels). Returns None for non-OS-APOW payloads.
 
         For comment/review events (issue_comment, pull_request_review), we
-        create work items without requiring agent labels since these events
-        represent new work requests based on the comment/review content.
+        only create work items if the parent issue/PR already has OS-APOW
+        labels, indicating it is part of the workflow.
         """
         issue = payload.get("issue") or payload.get("pull_request")
         if not issue:
@@ -77,17 +77,35 @@ class WebhookNotifier:
         # Determine task type from labels
         labels = [label.get("name", "") for label in issue.get("labels", [])]
 
-        # For comment/review events, allow creation without agent labels
-        # These events represent new work based on the comment/review content
+        # All OS-APOW status labels (including terminal states for requeue detection)
+        all_agent_labels = {
+            "agent:queued",
+            "agent:plan",
+            "agent:in-progress",
+            "agent:reconciling",
+            "agent:success",
+            "agent:error",
+            "agent:infra-failure",
+            "agent:stalled-budget",
+        }
+        # Labels that indicate new work can be queued
+        queuable_labels = {"agent:queued", "agent:plan", "agent:in-progress"}
+
         comment_review_events = {
             "issue_comment",
             "pull_request_review",
             "pull_request_review_comment",
         }
-        if event_type not in comment_review_events:
-            # Only process if this has OS-APOW-specific labels
-            agent_labels = {"agent:queued", "agent:plan", "agent:in-progress"}
-            if not any(label in agent_labels for label in labels):
+
+        if event_type in comment_review_events:
+            # For comment/review events, only process if the parent issue
+            # has OS-APOW labels (indicating it's part of the workflow)
+            if not any(label in all_agent_labels for label in labels):
+                logger.debug(f"Comment/review on non-OS-APOW issue, skipping: {labels}")
+                return None
+        else:
+            # For other events, only process if this has queuable OS-APOW labels
+            if not any(label in queuable_labels for label in labels):
                 logger.debug(f"No OS-APOW labels found, skipping: {labels}")
                 return None
 
@@ -186,12 +204,53 @@ def create_app() -> FastAPI:
         if not work_item:
             return {"status": "ignored", "reason": "No valid work item"}
 
-        success = await queue.add_to_queue(work_item)
-        if success:
-            logger.info(f"Queued work item #{work_item.issue_number}")
-            return {"status": "queued", "issue": work_item.issue_number}
+        # For comment/review events on issues with existing OS-APOW status,
+        # use requeue_with_feedback to properly handle state transitions
+        comment_review_events = {
+            "issue_comment",
+            "pull_request_review",
+            "pull_request_review_comment",
+        }
+        issue = payload.get("issue") or payload.get("pull_request", {})
+        labels = [label.get("name", "") for label in issue.get("labels", [])]
+
+        # Labels that indicate the issue is already in workflow (not just queued)
+        in_progress_labels = {
+            "agent:in-progress",
+            "agent:reconciling",
+            "agent:success",
+            "agent:error",
+            "agent:infra-failure",
+            "agent:stalled-budget",
+        }
+
+        if x_github_event in comment_review_events and any(
+            label in in_progress_labels for label in labels
+        ):
+            # Extract feedback from comment/review
+            comment = payload.get("comment", {})
+            review = payload.get("review", {})
+            feedback_body = ""
+            if comment and comment.get("body"):
+                feedback_body = comment.get("body", "")
+            elif review and review.get("body"):
+                feedback_body = review.get("body", "")
+
+            success = await queue.requeue_with_feedback(
+                work_item, feedback_body, reason="New comment/review feedback"
+            )
+            if success:
+                logger.info(f"Requeued work item #{work_item.issue_number} with feedback")
+                return {"status": "requeued", "issue": work_item.issue_number}
+            else:
+                raise HTTPException(status_code=500, detail="Failed to requeue work item")
         else:
-            raise HTTPException(status_code=500, detail="Failed to queue work item")
+            success = await queue.add_to_queue(work_item)
+            if success:
+                logger.info(f"Queued work item #{work_item.issue_number}")
+                return {"status": "queued", "issue": work_item.issue_number}
+            else:
+                raise HTTPException(status_code=500, detail="Failed to queue work item")
 
     @app.on_event("shutdown")
     async def shutdown_event():
