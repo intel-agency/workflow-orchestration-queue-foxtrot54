@@ -12,6 +12,9 @@ WORKDIR /app
 # Copy dependency files first for better caching
 COPY pyproject.toml .
 
+# Copy source code before install (required for editable install)
+COPY src/ ./src/
+
 # Install dependencies
 RUN uv pip install --system --no-cache -e .
 

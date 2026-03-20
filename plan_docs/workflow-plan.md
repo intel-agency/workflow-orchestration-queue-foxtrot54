@@ -85,10 +85,10 @@
 | **Assignment** | `init-existing-repository`: Initiate Existing Repository |
 | **Goal** | Initialize GitHub project, labels, milestones from plan docs |
 | **Key Acceptance Criteria** | - PR and new branch created<br>- Git Project created for issue tracking<br>- Git Project linked to repository<br>- Project columns created (Not Started, In Progress, In Review, Done)<br>- Labels imported<br>- Filenames changed to match project name |
-| **Project-Specific Notes** | Repository is fresh template clone. Need to create GitHub Project for workflow-orchestration-queue. Labels file (.labels.json) does not exist yet - will need to create standard labels. |
+| **Project-Specific Notes** | Repository is fresh template clone. Need to create GitHub Project for workflow-orchestration-queue. Labels can be imported from `.github/.labels.json` which contains standard labels. Note: `implementation:ready` label should be added to the label set. |
 | **Prerequisites** | GitHub authentication with repo, project scopes |
 | **Dependencies** | None |
-| **Risks / Challenges** | .labels.json not present - need to create standard labels |
+| **Risks / Challenges** | `implementation:ready` label not in `.labels.json` - need to add it |
 | **Events** | post-assignment-complete: validate-assignment-completion, report-progress |
 
 ---
@@ -225,9 +225,9 @@ initiate-new-repository (main step)
 
 1. **Labels File:** The .labels.json file does not exist in the template. Should we create standard labels or use a specific label set for this project?
 
-2. **Existing src/ in plan_docs:** The plan_docs/ directory contains a src/ subdirectory with Python files (notifier_service.py, orchestrator_sentinel.py). Should these be moved to the main src/ directory during project structure creation, or kept as reference implementations?
+2. **Reference Implementation Files:** The plan_docs/ directory contains reference Python files (`plan_docs/notifier_service.py`, `plan_docs/orchestrator_sentinel.py`). These should be used as reference implementations during project structure creation.
 
-3. **GitHub Project Naming:** Should the GitHub Project be named exactly "workflow-orchestration-queue-foxtrot54" (matching repo) or just "workflow-orchestration-queue"?
+3. **GitHub Project Naming:** The GitHub Project should be named "workflow-orchestration-queue-foxtrot54" (matching the repository name exactly).
 
 ---
 

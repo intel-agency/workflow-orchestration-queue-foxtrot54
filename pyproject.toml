@@ -41,7 +41,7 @@ dev = [
 ]
 
 [project.scripts]
-osapow-sentinel = "osapow.sentinel.orchestrator:main"
+osapow-sentinel = "osapow.sentinel.orchestrator:run_main"
 osapow-notifier = "uvicorn:main"
 
 [project.urls]

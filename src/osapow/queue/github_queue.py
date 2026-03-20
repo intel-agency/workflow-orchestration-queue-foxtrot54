@@ -9,6 +9,7 @@ See: OS-APOW Simplification Report, S-1 / S-6
 """
 
 import logging
+import re
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
 
@@ -81,9 +82,7 @@ class GitHubQueue(ITaskQueue):
     async def add_to_queue(self, item: WorkItem) -> bool:
         """Add the agent:queued label to a GitHub issue."""
         url = f"{self._repo_api_url(item.target_repo_slug)}/issues/{item.issue_number}/labels"
-        resp = await self._client.post(
-            url, json={"labels": [WorkItemStatus.QUEUED.value]}
-        )
+        resp = await self._client.post(url, json={"labels": [WorkItemStatus.QUEUED.value]})
         if resp.status_code in (200, 201):
             logger.info(f"Queued issue #{item.issue_number} ({item.task_type.value})")
             return True
@@ -110,9 +109,7 @@ class GitHubQueue(ITaskQueue):
             response.raise_for_status()
 
         if response.status_code != 200:
-            logger.error(
-                f"GitHub API error: {response.status_code} {response.text[:200]}"
-            )
+            logger.error(f"GitHub API error: {response.status_code} {response.text[:200]}")
             return []
 
         issues = response.json()
@@ -149,9 +146,7 @@ class GitHubQueue(ITaskQueue):
         base = self._repo_api_url(item.target_repo_slug)
         url_labels = f"{base}/issues/{item.issue_number}/labels"
 
-        resp = await self._client.delete(
-            f"{url_labels}/{WorkItemStatus.IN_PROGRESS.value}"
-        )
+        resp = await self._client.delete(f"{url_labels}/{WorkItemStatus.IN_PROGRESS.value}")
         if resp.status_code not in (200, 204, 404, 410):
             logger.error(f"Label cleanup failed: {resp.status_code}")
 
@@ -164,9 +159,7 @@ class GitHubQueue(ITaskQueue):
 
     # --- Sentinel-specific methods ---
 
-    async def claim_task(
-        self, item: WorkItem, sentinel_id: str, bot_login: str = ""
-    ) -> bool:
+    async def claim_task(self, item: WorkItem, sentinel_id: str, bot_login: str = "") -> bool:
         """Claim a task using assign-then-verify distributed locking.
 
         Steps:
@@ -184,23 +177,39 @@ class GitHubQueue(ITaskQueue):
                 json={"assignees": [bot_login]},
             )
             if resp.status_code not in (200, 201):
-                logger.warning(
-                    f"Failed to assign #{item.issue_number}: {resp.status_code}"
-                )
+                logger.warning(f"Failed to assign #{item.issue_number}: {resp.status_code}")
                 return False
 
-            # Step 2: Re-fetch and verify assignee
+            # Step 2: Re-fetch and verify assignee (also check for sentinel claim comment)
             verify_resp = await self._client.get(url_issue)
             if verify_resp.status_code == 200:
-                assignees = [
-                    a["login"] for a in verify_resp.json().get("assignees", [])
-                ]
+                issue_data = verify_resp.json()
+                assignees = [a["login"] for a in issue_data.get("assignees", [])]
                 if bot_login not in assignees:
                     logger.warning(
                         f"Lost race on #{item.issue_number} — "
                         f"assignees are {assignees}, expected {bot_login}"
                     )
                     return False
+
+                # Also verify no other sentinel has claimed via comment marker
+                comments_url = f"{url_issue}/comments"
+                comments_resp = await self._client.get(comments_url)
+                if comments_resp.status_code == 200:
+                    comments = comments_resp.json()
+                    for comment in comments:
+                        body = comment.get("body", "")
+                        if "<!-- sentinel-claim:" in body:
+                            # Extract sentinel ID from comment
+                            match = re.search(r"<!-- sentinel-claim: (.+?) -->", body)
+                            if match:
+                                existing_sentinel = match.group(1)
+                                if existing_sentinel != sentinel_id:
+                                    logger.warning(
+                                        f"Lost race on #{item.issue_number} — "
+                                        f"already claimed by sentinel {existing_sentinel}"
+                                    )
+                                    return False
             else:
                 logger.warning(
                     f"Could not verify assignment for #{item.issue_number}: "
@@ -220,12 +229,14 @@ class GitHubQueue(ITaskQueue):
             json={"labels": [WorkItemStatus.IN_PROGRESS.value]},
         )
 
-        # Step 4: Post claim comment
+        # Step 4: Post claim comment with sentinel identifier
         comment_url = f"{url_issue}/comments"
         msg = (
             f"🚀 **Sentinel {sentinel_id}** has claimed this task.\n"
+            f"- **Sentinel ID:** `{sentinel_id}`\n"
             f"- **Start Time:** {datetime.now(UTC).isoformat()}\n"
-            f"- **Environment:** `devcontainer-opencode.sh` initializing..."
+            f"- **Environment:** `devcontainer-opencode.sh` initializing...\n\n"
+            f"<!-- sentinel-claim: {sentinel_id} -->"
         )
         await self._client.post(comment_url, json={"body": msg})
 

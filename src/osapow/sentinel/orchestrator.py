@@ -84,9 +84,7 @@ class SentinelOrchestrator:
 
             # Wait for next poll or shutdown
             try:
-                await asyncio.wait_for(
-                    self._shutdown_event.wait(), timeout=self.poll_interval
-                )
+                await asyncio.wait_for(self._shutdown_event.wait(), timeout=self.poll_interval)
                 break  # Shutdown event was set
             except TimeoutError:
                 pass  # Normal poll interval
@@ -127,9 +125,7 @@ class SentinelOrchestrator:
                 final_status,
                 comment=self._build_completion_comment(task, success),
             )
-            logger.info(
-                f"Task #{task.issue_number} completed with status: {final_status}"
-            )
+            logger.info(f"Task #{task.issue_number} completed with status: {final_status}")
         except Exception as e:
             logger.error(f"Task #{task.issue_number} failed: {e}", exc_info=True)
             await self.queue.update_status(
@@ -147,6 +143,10 @@ class SentinelOrchestrator:
         """
         logger.info(f"Executing task #{task.issue_number}: {task.task_type.value}")
         # Placeholder - actual implementation will invoke the worker
+        logger.warning(
+            f"PLACEHOLDER: Task #{task.issue_number} execution is not implemented. "
+            "This is a stub that returns success without running any worker command."
+        )
         await asyncio.sleep(5)  # Simulate work
         return True
 
@@ -165,7 +165,16 @@ class SentinelOrchestrator:
         """Clean up resources on shutdown."""
         logger.info(f"Sentinel {self.sentinel_id} shutting down...")
         if self._current_task:
-            logger.warning(f"Task #{self._current_task.issue_number} interrupted")
+            logger.warning(f"Task #{self._current_task.issue_number} interrupted - requeuing")
+            try:
+                # Requeue the interrupted task by changing label back to queued
+                await self.queue.update_status(
+                    self._current_task,
+                    WorkItemStatus.QUEUED,
+                    comment=f"⚠️ **Task Requeued**\n- **Reason:** Sentinel {self.sentinel_id} shutdown",
+                )
+            except Exception as e:
+                logger.error(f"Failed to requeue task #{self._current_task.issue_number}: {e}")
         await self.queue.close()
         logger.info("Cleanup complete")
 
@@ -198,5 +207,10 @@ async def main():
     await sentinel.start()
 
 
-if __name__ == "__main__":
+def run_main():
+    """Synchronous entry point for console script."""
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    run_main()

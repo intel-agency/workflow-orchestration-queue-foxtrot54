@@ -39,4 +39,4 @@ A GitHub Project should be created manually with the following columns:
 
 ## Devcontainer
 
-The devcontainer is configured with the name `workflow-orchestration-queue-foxtrot54`.
+The devcontainer is configured with the name `workflow-orchestration-queue-foxtrot54-devcontainer`.

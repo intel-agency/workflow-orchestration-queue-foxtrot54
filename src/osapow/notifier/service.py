@@ -38,9 +38,13 @@ class WebhookNotifier:
         self.webhook_secret = webhook_secret
 
     def verify_signature(self, payload: bytes, signature: str) -> bool:
-        """Verify HMAC SHA256 webhook signature."""
+        """Verify HMAC SHA256 webhook signature.
+
+        Raises ValueError if WEBHOOK_SECRET is not configured.
+        """
         if not self.webhook_secret:
-            return True  # Skip verification if no secret configured
+            logger.error("WEBHOOK_SECRET is not configured - rejecting webhook")
+            raise ValueError("WEBHOOK_SECRET must be configured for webhook verification")
 
         expected = (
             "sha256="
@@ -54,7 +58,11 @@ class WebhookNotifier:
         return hmac.compare_digest(expected, signature)
 
     def parse_work_item(self, payload: dict) -> WorkItem | None:
-        """Parse a GitHub webhook payload into a WorkItem."""
+        """Parse a GitHub webhook payload into a WorkItem.
+
+        Only creates work items for OS-APOW-specific events (e.g., issues/PRs
+        with agent-related labels). Returns None for non-OS-APOW payloads.
+        """
         issue = payload.get("issue") or payload.get("pull_request")
         if not issue:
             return None
@@ -64,6 +72,13 @@ class WebhookNotifier:
 
         # Determine task type from labels
         labels = [label.get("name", "") for label in issue.get("labels", [])]
+
+        # Only process if this has OS-APOW-specific labels
+        agent_labels = {"agent:queued", "agent:plan", "agent:in-progress"}
+        if not any(label in agent_labels for label in labels):
+            logger.debug(f"No OS-APOW labels found, skipping: {labels}")
+            return None
+
         task_type = TaskType.IMPLEMENT
         if "agent:plan" in labels or "[Plan]" in issue.get("title", ""):
             task_type = TaskType.PLAN
@@ -111,8 +126,11 @@ def create_app() -> FastAPI:
         payload_bytes = await request.body()
 
         # Verify signature
-        if not notifier.verify_signature(payload_bytes, x_hub_signature_256):
-            raise HTTPException(status_code=401, detail="Invalid signature")
+        try:
+            if not notifier.verify_signature(payload_bytes, x_hub_signature_256):
+                raise HTTPException(status_code=401, detail="Invalid signature")
+        except ValueError as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
         # Parse payload
         try:
@@ -121,12 +139,26 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
         # Only process relevant events
-        if x_github_event not in ("issues", "issue_comment", "pull_request"):
+        if x_github_event not in (
+            "issues",
+            "issue_comment",
+            "pull_request",
+            "pull_request_review",
+            "pull_request_review_comment",
+        ):
             return {"status": "ignored", "event": x_github_event}
 
         action = payload.get("action", "")
-        if action not in ("opened", "labeled", "reopened"):
-            return {"status": "ignored", "action": action}
+        valid_actions = {
+            "issues": ("opened", "labeled", "reopened"),
+            "issue_comment": ("created",),
+            "pull_request": ("opened", "labeled", "reopened", "synchronize"),
+            "pull_request_review": ("submitted",),
+            "pull_request_review_comment": ("created",),
+        }
+        allowed_actions = valid_actions.get(x_github_event, ())
+        if action not in allowed_actions:
+            return {"status": "ignored", "action": action, "event": x_github_event}
 
         # Parse and queue work item
         work_item = notifier.parse_work_item(payload)
