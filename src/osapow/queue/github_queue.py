@@ -257,3 +257,48 @@ class GitHubQueue(ITaskQueue):
             await self._client.post(comment_url, json={"body": msg})
         except Exception as exc:
             logger.warning(f"Heartbeat post failed: {exc}")
+
+    async def requeue_with_feedback(
+        self, item: WorkItem, feedback_body: str, reason: str = "Reviewer feedback"
+    ) -> bool:
+        """Requeue a task with reviewer feedback included.
+
+        This method is used when a task needs to be re-queued with additional
+        feedback (e.g., from a PR review). The feedback is posted as a comment
+        and the task is marked as queued for re-processing.
+
+        Args:
+            item: The WorkItem to requeue
+            feedback_body: The reviewer feedback to include
+            reason: Reason for requeuing (default: "Reviewer feedback")
+
+        Returns:
+            True if requeue was successful, False otherwise
+        """
+        base = self._repo_api_url(item.target_repo_slug)
+        url_labels = f"{base}/issues/{item.issue_number}/labels"
+
+        # Remove any terminal status labels
+        for status in (WorkItemStatus.SUCCESS, WorkItemStatus.ERROR, WorkItemStatus.IN_PROGRESS):
+            resp = await self._client.delete(f"{url_labels}/{status.value}")
+            if resp.status_code not in (200, 204, 404, 410):
+                logger.debug(f"Label cleanup for {status.value}: {resp.status_code}")
+
+        # Add queued label
+        resp = await self._client.post(url_labels, json={"labels": [WorkItemStatus.QUEUED.value]})
+        if resp.status_code not in (200, 201):
+            logger.error(f"Failed to requeue #{item.issue_number}: {resp.status_code}")
+            return False
+
+        # Post feedback as a comment so the agent knows what corrections were requested
+        safe_feedback = scrub_secrets(feedback_body)
+        comment_url = f"{base}/issues/{item.issue_number}/comments"
+        msg = (
+            f"🔄 **Task Requeued** — {reason}\n\n"
+            f"### Reviewer Feedback\n\n{safe_feedback}\n\n"
+            f"---\n*Please address the feedback above and resubmit.*"
+        )
+        await self._client.post(comment_url, json={"body": msg})
+
+        logger.info(f"Requeued #{item.issue_number} with reviewer feedback")
+        return True

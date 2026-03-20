@@ -14,6 +14,7 @@ import logging
 import os
 import random
 import signal
+import sys
 from datetime import UTC, datetime
 
 import httpx
@@ -250,7 +251,7 @@ async def main():
         logger.error(
             "Missing required environment variables: GITHUB_TOKEN, GITHUB_ORG, GITHUB_REPO"
         )
-        return
+        sys.exit(1)
 
     sentinel = SentinelOrchestrator(
         token=token,

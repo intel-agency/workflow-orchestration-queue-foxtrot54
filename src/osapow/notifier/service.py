@@ -57,11 +57,15 @@ class WebhookNotifier:
 
         return hmac.compare_digest(expected, signature)
 
-    def parse_work_item(self, payload: dict) -> WorkItem | None:
+    def parse_work_item(self, payload: dict, event_type: str = "") -> WorkItem | None:
         """Parse a GitHub webhook payload into a WorkItem.
 
         Only creates work items for OS-APOW-specific events (e.g., issues/PRs
         with agent-related labels). Returns None for non-OS-APOW payloads.
+
+        For comment/review events (issue_comment, pull_request_review), we
+        create work items without requiring agent labels since these events
+        represent new work requests based on the comment/review content.
         """
         issue = payload.get("issue") or payload.get("pull_request")
         if not issue:
@@ -73,11 +77,19 @@ class WebhookNotifier:
         # Determine task type from labels
         labels = [label.get("name", "") for label in issue.get("labels", [])]
 
-        # Only process if this has OS-APOW-specific labels
-        agent_labels = {"agent:queued", "agent:plan", "agent:in-progress"}
-        if not any(label in agent_labels for label in labels):
-            logger.debug(f"No OS-APOW labels found, skipping: {labels}")
-            return None
+        # For comment/review events, allow creation without agent labels
+        # These events represent new work based on the comment/review content
+        comment_review_events = {
+            "issue_comment",
+            "pull_request_review",
+            "pull_request_review_comment",
+        }
+        if event_type not in comment_review_events:
+            # Only process if this has OS-APOW-specific labels
+            agent_labels = {"agent:queued", "agent:plan", "agent:in-progress"}
+            if not any(label in agent_labels for label in labels):
+                logger.debug(f"No OS-APOW labels found, skipping: {labels}")
+                return None
 
         task_type = TaskType.IMPLEMENT
         if "agent:plan" in labels or "[Plan]" in issue.get("title", ""):
@@ -85,11 +97,20 @@ class WebhookNotifier:
         elif "bug" in labels:
             task_type = TaskType.BUGFIX
 
+        # For comment/review events, include the comment body in context
+        context_body = issue.get("body") or ""
+        comment = payload.get("comment", {})
+        review = payload.get("review", {})
+        if comment and comment.get("body"):
+            context_body = f"{context_body}\n\n---\n**Comment:**\n{comment.get('body')}"
+        elif review and review.get("body"):
+            context_body = f"{context_body}\n\n---\n**Review Feedback:**\n{review.get('body')}"
+
         return WorkItem(
             id=str(issue.get("id", "")),
             issue_number=issue.get("number", 0),
             source_url=issue.get("html_url", ""),
-            context_body=issue.get("body") or "",
+            context_body=context_body,
             target_repo_slug=repo_slug,
             task_type=task_type,
             status=WorkItemStatus.QUEUED,
@@ -161,7 +182,7 @@ def create_app() -> FastAPI:
             return {"status": "ignored", "action": action, "event": x_github_event}
 
         # Parse and queue work item
-        work_item = notifier.parse_work_item(payload)
+        work_item = notifier.parse_work_item(payload, event_type=x_github_event)
         if not work_item:
             return {"status": "ignored", "reason": "No valid work item"}
 
