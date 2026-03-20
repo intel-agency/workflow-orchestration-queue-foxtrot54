@@ -9,10 +9,14 @@ See: OS-APOW Architecture Guide v3.2
 """
 
 import asyncio
+import contextlib
 import logging
 import os
+import random
 import signal
 from datetime import UTC, datetime
+
+import httpx
 
 from osapow.models import WorkItem, WorkItemStatus
 from osapow.queue import GitHubQueue
@@ -49,6 +53,8 @@ class SentinelOrchestrator:
         self._running = False
         self._current_task: WorkItem | None = None
         self._shutdown_event = asyncio.Event()
+        self._running_heartbeat: asyncio.Task[None] | None = None
+        self._rate_limit_backoff: float = 0.0
 
     async def start(self):
         """Start the sentinel polling loop."""
@@ -75,10 +81,35 @@ class SentinelOrchestrator:
         self._shutdown_event.set()
 
     async def _run_loop(self):
-        """Main polling loop."""
+        """Main polling loop with rate-limit backoff."""
         while self._running:
+            # Apply any pending backoff from rate limiting
+            if self._rate_limit_backoff > 0:
+                logger.warning(f"Rate limited - backing off for {self._rate_limit_backoff:.1f}s")
+                try:
+                    await asyncio.wait_for(
+                        self._shutdown_event.wait(), timeout=self._rate_limit_backoff
+                    )
+                    break  # Shutdown during backoff
+                except TimeoutError:
+                    pass  # Backoff complete
+
             try:
                 await self._poll_and_process()
+                # Reset backoff on successful poll
+                self._rate_limit_backoff = 0.0
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code in (403, 429):
+                    # Exponential backoff with jitter for rate limits
+                    base_backoff = min(self._rate_limit_backoff * 2 + 1, 300)  # Cap at 5 min
+                    jitter = random.uniform(0, base_backoff * 0.1)  # 10% jitter
+                    self._rate_limit_backoff = base_backoff + jitter
+                    logger.warning(
+                        f"GitHub API rate limit (HTTP {e.response.status_code}), "
+                        f"next backoff: {self._rate_limit_backoff:.1f}s"
+                    )
+                else:
+                    logger.error(f"HTTP error in polling loop: {e}", exc_info=True)
             except Exception as e:
                 logger.error(f"Error in polling loop: {e}", exc_info=True)
 
@@ -117,6 +148,11 @@ class SentinelOrchestrator:
             return False
 
         self._current_task = task
+        start_time = datetime.now(UTC)
+
+        # Start heartbeat background task
+        self._running_heartbeat = asyncio.create_task(self._heartbeat_loop(task, start_time))
+
         try:
             success = await self._execute_task(task)
             final_status = WorkItemStatus.SUCCESS if success else WorkItemStatus.ERROR
@@ -132,9 +168,26 @@ class SentinelOrchestrator:
                 task, WorkItemStatus.ERROR, comment=f"❌ **Error:** {str(e)[:500]}"
             )
         finally:
+            # Cancel heartbeat task
+            if self._running_heartbeat:
+                self._running_heartbeat.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._running_heartbeat
+                self._running_heartbeat = None
             self._current_task = None
 
         return True
+
+    async def _heartbeat_loop(self, task: WorkItem, start_time: datetime):
+        """Background task that posts heartbeat comments during execution."""
+        try:
+            while True:
+                await asyncio.sleep(self.heartbeat_interval)
+                elapsed = int((datetime.now(UTC) - start_time).total_seconds())
+                await self.queue.post_heartbeat(task, self.sentinel_id, elapsed)
+        except asyncio.CancelledError:
+            logger.debug(f"Heartbeat loop cancelled for task #{task.issue_number}")
+            raise
 
     async def _execute_task(self, task: WorkItem) -> bool:
         """Execute a claimed task.
@@ -190,6 +243,8 @@ async def main():
     org = os.environ.get("GITHUB_ORG", "")
     repo = os.environ.get("GITHUB_REPO", "")
     bot_login = os.environ.get("SENTINEL_BOT_LOGIN", "")
+    poll_interval = int(os.environ.get("SENTINEL_POLL_INTERVAL", "60"))
+    heartbeat_interval = int(os.environ.get("HEARTBEAT_INTERVAL", "300"))
 
     if not all([token, org, repo]):
         logger.error(
@@ -202,6 +257,8 @@ async def main():
         org=org,
         repo=repo,
         bot_login=bot_login,
+        poll_interval=poll_interval,
+        heartbeat_interval=heartbeat_interval,
     )
 
     await sentinel.start()
