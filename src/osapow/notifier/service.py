@@ -66,7 +66,23 @@ class WebhookNotifier:
         For comment/review events (issue_comment, pull_request_review), we
         only create work items if the parent issue/PR already has OS-APOW
         labels, indicating it is part of the workflow.
+
+        Note: PR issue_comment events are skipped because payload["issue"]
+        contains the PR itself, not the source work item issue. This scenario
+        needs manual handling to map PR comments back to the original issue.
         """
+        # Skip PR issue_comment events - we can't map to the source work item
+        if event_type == "issue_comment":
+            issue = payload.get("issue", {})
+            # Check if this is a PR (has pull_request key in the issue object)
+            if issue and "pull_request" in issue:
+                pr_number = issue.get("number", "unknown")
+                logger.warning(
+                    f"Skipping PR issue_comment event for PR #{pr_number} - "
+                    "cannot map to source work item. Manual handling required."
+                )
+                return None
+
         issue = payload.get("issue") or payload.get("pull_request")
         if not issue:
             return None

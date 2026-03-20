@@ -177,7 +177,15 @@ class GitHubQueue(ITaskQueue):
         if resp.status_code not in (200, 204, 404, 410):
             logger.error(f"Label cleanup failed: {resp.status_code}")
 
-        await self._client.post(url_labels, json={"labels": [status.value]})
+        # Add the terminal status label and check for failures
+        resp = await self._client.post(url_labels, json={"labels": [status.value]})
+        if resp.status_code not in (200, 201):
+            logger.error(
+                f"Failed to set terminal label '{status.value}' on "
+                f"#{item.issue_number}: {resp.status_code} - {resp.text[:200]}"
+            )
+            # Consider raising an exception or returning failure status
+            # For now, we log the error but continue to post comment if provided
 
         if comment:
             safe_comment = scrub_secrets(comment)
