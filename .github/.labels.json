@@ -1,5 +1,40 @@
 [
     {
+        "name": "agent:queued",
+        "color": "fbca04",
+        "description": "Task queued for agent processing"
+    },
+    {
+        "name": "agent:in-progress",
+        "color": "0075ca",
+        "description": "Agent actively working on task"
+    },
+    {
+        "name": "agent:reconciling",
+        "color": "5319e7",
+        "description": "Agent reconciling task state"
+    },
+    {
+        "name": "agent:success",
+        "color": "0e8a16",
+        "description": "Task completed successfully"
+    },
+    {
+        "name": "agent:error",
+        "color": "d73a4a",
+        "description": "Task failed with error"
+    },
+    {
+        "name": "agent:infra-failure",
+        "color": "b60205",
+        "description": "Infrastructure failure during task"
+    },
+    {
+        "name": "agent:stalled-budget",
+        "color": "e99695",
+        "description": "Task stalled due to budget limits"
+    },
+    {
         "id": 8775985735,
         "node_id": "LA_kwDOOpTlG88AAAACCxbqRw",
         "url": "https://api.github.com/repos/nam20485/AgentAsAService/labels/assigned",

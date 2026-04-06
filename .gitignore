@@ -424,3 +424,22 @@ docker/validation/logs/
 docker/validation/results.jsonl
 docker/.env
 models.json
+
+# Python
+.venv/
+venv/
+.env
+*.py[cod]
+*$py.class
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
