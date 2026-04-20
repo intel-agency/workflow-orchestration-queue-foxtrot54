@@ -1,0 +1,75 @@
+# OS-APOW Docker Compose Configuration
+# For local development and testing
+
+services:
+  # Webhook Notifier Service (The Ear)
+  notifier:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_ORG=${GITHUB_ORG}
+      - GITHUB_REPO=${GITHUB_REPO}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
+      - SENTINEL_BOT_LOGIN=${SENTINEL_BOT_LOGIN:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - osapow-network
+    restart: unless-stopped
+
+  # Sentinel Orchestrator Service (The Brain)
+  sentinel:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-m", "osapow.sentinel.orchestrator"]
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_ORG=${GITHUB_ORG}
+      - GITHUB_REPO=${GITHUB_REPO}
+      - SENTINEL_BOT_LOGIN=${SENTINEL_BOT_LOGIN:-}
+    volumes:
+      - workspace-data:/workspace
+    networks:
+      - osapow-network
+    restart: unless-stopped
+    depends_on:
+      notifier:
+        condition: service_healthy
+
+  # Development container with full tooling
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    command: ["sleep", "infinity"]
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_ORG=${GITHUB_ORG}
+      - GITHUB_REPO=${GITHUB_REPO}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
+      - SENTINEL_BOT_LOGIN=${SENTINEL_BOT_LOGIN:-}
+    volumes:
+      - .:/app
+      - workspace-data:/workspace
+    networks:
+      - osapow-network
+    profiles:
+      - dev
+
+networks:
+  osapow-network:
+    driver: bridge
+    name: osapow-network
+
+volumes:
+  workspace-data:
+    name: osapow-workspace
