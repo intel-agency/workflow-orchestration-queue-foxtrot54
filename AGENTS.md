@@ -40,6 +40,7 @@ Guidance for AI coding agents working on the OS-APOW project.
 ```bash
 # Python/OS-APOW service development
 uv sync                          # Install Python dependencies
+uv sync --extra dev              # Install with dev tools (pytest, ruff, mypy)
 ```
 
 ### Run Services
@@ -166,7 +167,7 @@ The `validate.yml` workflow runs on every push and PR:
 - Target: Python 3.12+
 - Line length: 100 characters
 - Strict mypy enabled
-- Rules: pycodestyle (E/W), pyflakes (F), isort (I), bugbear (B), comprehensions (C4), pyupgrade (UP)
+- Rules: pycodestyle (E/W), pyflakes (F), isort (I), bugbear (B), comprehensions (C4), pyupgrade (UP), unused-arguments (ARG), simplify (SIM)
 
 ### Shell Scripts
 
