@@ -12,6 +12,7 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 
@@ -42,7 +43,7 @@ class ITaskQueue(ABC):
     @abstractmethod
     async def update_status(
         self, item: WorkItem, status: WorkItemStatus, comment: str | None = None
-    ):
+    ) -> None:
         pass
 
 
@@ -81,7 +82,7 @@ class GitHubQueue(ITaskQueue):
             timeout=30.0,
         )
 
-    async def close(self):
+    async def close(self) -> None:
         """Release the connection pool. Call during graceful shutdown."""
         await self._client.aclose()
 
@@ -111,9 +112,13 @@ class GitHubQueue(ITaskQueue):
             return []
 
         url = f"{self._repo_api_url(f'{self.org}/{self.repo}')}/issues"
-        params = {"labels": WorkItemStatus.QUEUED.value, "state": "open", "per_page": 100}
+        params: dict[str, str | int] = {
+            "labels": WorkItemStatus.QUEUED.value,
+            "state": "open",
+            "per_page": 100,
+        }
 
-        all_issues: list[dict] = []
+        all_issues: list[dict[str, Any]] = []
         page = 1
 
         while True:
@@ -168,7 +173,7 @@ class GitHubQueue(ITaskQueue):
 
     async def update_status(
         self, item: WorkItem, status: WorkItemStatus, comment: str | None = None
-    ):
+    ) -> None:
         """Finalize the task state on GitHub with terminal labels and logs."""
         base = self._repo_api_url(item.target_repo_slug)
         url_labels = f"{base}/issues/{item.issue_number}/labels"
@@ -194,7 +199,7 @@ class GitHubQueue(ITaskQueue):
 
     # --- Sentinel-specific methods ---
 
-    def _is_claim_stale(self, comment_body: str, comment: dict) -> bool:
+    def _is_claim_stale(self, comment_body: str, comment: dict[str, Any]) -> bool:
         """Check if a sentinel claim is stale based on timestamp.
 
         A claim is considered stale if:
@@ -338,7 +343,7 @@ class GitHubQueue(ITaskQueue):
         logger.info(f"Successfully claimed Task #{item.issue_number}")
         return True
 
-    async def post_heartbeat(self, item: WorkItem, sentinel_id: str, elapsed_secs: int):
+    async def post_heartbeat(self, item: WorkItem, sentinel_id: str, elapsed_secs: int) -> None:
         """Post a heartbeat comment to keep observers informed."""
         base = self._repo_api_url(item.target_repo_slug)
         comment_url = f"{base}/issues/{item.issue_number}/comments"

@@ -2,7 +2,6 @@
 Tests for OS-APOW Work Item model.
 """
 
-
 from osapow.models import TaskType, WorkItem, WorkItemStatus, scrub_secrets
 
 

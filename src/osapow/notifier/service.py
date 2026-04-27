@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import logging
 import os
+from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
@@ -26,8 +27,8 @@ class WebhookPayload(BaseModel):
     """Simplified webhook payload model."""
 
     action: str
-    issue: dict | None = None
-    repository: dict | None = None
+    issue: dict[str, Any] | None = None
+    repository: dict[str, Any] | None = None
 
 
 class WebhookNotifier:
@@ -57,7 +58,7 @@ class WebhookNotifier:
 
         return hmac.compare_digest(expected, signature)
 
-    def parse_work_item(self, payload: dict, event_type: str = "") -> WorkItem | None:
+    def parse_work_item(self, payload: dict[str, Any], event_type: str = "") -> WorkItem | None:
         """Parse a GitHub webhook payload into a WorkItem.
 
         Only creates work items for OS-APOW-specific events (e.g., issues/PRs
@@ -167,7 +168,7 @@ def create_app() -> FastAPI:
     notifier = WebhookNotifier(queue=queue, webhook_secret=webhook_secret)
 
     @app.get("/health")
-    async def health_check():
+    async def health_check() -> dict[str, str]:
         """Health check endpoint."""
         return {"status": "healthy", "service": "osapow-notifier"}
 
@@ -176,7 +177,7 @@ def create_app() -> FastAPI:
         request: Request,
         x_hub_signature_256: str = Header(default=""),
         x_github_event: str = Header(default=""),
-    ):
+    ) -> dict[str, str | int]:
         """Handle incoming GitHub webhooks."""
         payload_bytes = await request.body()
 
@@ -269,7 +270,7 @@ def create_app() -> FastAPI:
                 raise HTTPException(status_code=500, detail="Failed to queue work item")
 
     @app.on_event("shutdown")
-    async def shutdown_event():
+    async def shutdown_event() -> None:
         """Clean up resources on shutdown."""
         await queue.close()
 

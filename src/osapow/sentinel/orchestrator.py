@@ -58,7 +58,7 @@ class SentinelOrchestrator:
         self._running_heartbeat: asyncio.Task[None] | None = None
         self._rate_limit_backoff: float = 0.0
 
-    async def start(self):
+    async def start(self) -> None:
         """Start the sentinel polling loop."""
         self._running = True
         logger.info(
@@ -76,13 +76,13 @@ class SentinelOrchestrator:
         finally:
             await self._cleanup()
 
-    def _handle_shutdown(self):
+    def _handle_shutdown(self) -> None:
         """Handle shutdown signals gracefully."""
         logger.info(f"Sentinel {self.sentinel_id} received shutdown signal")
         self._running = False
         self._shutdown_event.set()
 
-    async def _run_loop(self):
+    async def _run_loop(self) -> None:
         """Main polling loop with rate-limit backoff."""
         while self._running:
             # Apply any pending backoff from rate limiting
@@ -122,7 +122,7 @@ class SentinelOrchestrator:
             except TimeoutError:
                 pass  # Normal poll interval
 
-    async def _poll_and_process(self):
+    async def _poll_and_process(self) -> None:
         """Poll for queued tasks and process them."""
         tasks = await self.queue.fetch_queued_tasks()
         if not tasks:
@@ -180,7 +180,7 @@ class SentinelOrchestrator:
 
         return True
 
-    async def _heartbeat_loop(self, task: WorkItem, start_time: datetime):
+    async def _heartbeat_loop(self, task: WorkItem, start_time: datetime) -> None:
         """Background task that posts heartbeat comments during execution."""
         try:
             while True:
@@ -216,7 +216,7 @@ class SentinelOrchestrator:
             f"- **Task Type:** {task.task_type.value}"
         )
 
-    async def _cleanup(self):
+    async def _cleanup(self) -> None:
         """Clean up resources on shutdown."""
         logger.info(f"Sentinel {self.sentinel_id} shutting down...")
         if self._current_task:
@@ -234,7 +234,7 @@ class SentinelOrchestrator:
         logger.info("Cleanup complete")
 
 
-async def main():
+async def main() -> None:
     """Entry point for running the sentinel."""
     logging.basicConfig(
         level=logging.INFO,
@@ -270,7 +270,7 @@ async def main():
     await sentinel.start()
 
 
-def run_main():
+def run_main() -> None:
     """Synchronous entry point for console script."""
     asyncio.run(main())
 
