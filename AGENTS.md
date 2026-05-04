@@ -89,7 +89,8 @@ tests/                         # Python unit tests (pytest)
 ├── conftest.py                # Shared fixtures
 ├── test_work_item.py          # Model tests
 ├── test_github_queue.py       # Queue tests
-└── test_orchestrator.py       # Sentinel tests
+├── test_orchestrator.py       # Sentinel tests
+└── test_notifier.py           # Notifier/webhook tests
 
 .github/workflows/
 ├── orchestrator-agent.yml     # Main AI orchestration workflow
@@ -109,12 +110,17 @@ scripts/
 ├── devcontainer-opencode.sh   # Devcontainer orchestration
 ├── start-opencode-server.sh   # Opencode server lifecycle
 ├── assemble-orchestrator-prompt.sh  # Prompt assembly
+├── resolve-image-tags.sh      # Image tag resolution
+├── trigger-orchestrator-test.sh  # Orchestrator test trigger
 └── *.ps1                      # PowerShell utilities (auth, labels, etc.)
 
 test/                          # Shell-based tests
 ├── test-prompt-assembly.sh    # Prompt assembly validation
 ├── test-devcontainer-tools.sh # Tool availability smoke tests
+├── test-devcontainer-build.sh # Devcontainer build tests
 ├── test-image-tag-logic.sh    # Image tag resolution tests
+├── test-opencode-server.sh    # Opencode server tests
+├── test-opencode-run.sh       # Opencode run tests
 └── fixtures/                  # Sample webhook payloads
 
 local_ai_instruction_modules/  # Local instruction modules
