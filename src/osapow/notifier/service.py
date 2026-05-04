@@ -12,6 +12,8 @@ import hashlib
 import hmac
 import logging
 import os
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -155,17 +157,24 @@ class WebhookNotifier:
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
-    app = FastAPI(
-        title="OS-APOW Webhook Notifier",
-        description="Webhook receiver for GitHub events",
-        version="0.1.0",
-    )
-
-    # Initialize queue and notifier
+    # Initialize queue and notifier (shared across lifespan)
     token = os.environ.get("GITHUB_TOKEN", "")
     webhook_secret = os.environ.get("WEBHOOK_SECRET", "")
     queue = GitHubQueue(token=token)
     notifier = WebhookNotifier(queue=queue, webhook_secret=webhook_secret)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+        """Manage application lifecycle."""
+        yield
+        await queue.close()
+
+    app = FastAPI(
+        title="OS-APOW Webhook Notifier",
+        description="Webhook receiver for GitHub events",
+        version="0.1.0",
+        lifespan=lifespan,
+    )
 
     @app.get("/health")
     async def health_check() -> dict[str, str]:
@@ -268,11 +277,6 @@ def create_app() -> FastAPI:
                 return {"status": "queued", "issue": work_item.issue_number}
             else:
                 raise HTTPException(status_code=500, detail="Failed to queue work item")
-
-    @app.on_event("shutdown")
-    async def shutdown_event() -> None:
-        """Clean up resources on shutdown."""
-        await queue.close()
 
     return app
 
