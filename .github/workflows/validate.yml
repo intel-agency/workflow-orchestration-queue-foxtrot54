@@ -138,6 +138,34 @@ jobs:
       - name: Scan for secrets
         run: gitleaks detect --source . --redact --no-git=false
 
+  test-python:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@e92b3a4fe419e8e4e0a9b5a2f3c665eb1854147d # v6.4.2
+        with:
+          version: "0.10.9"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Lint with ruff
+        run: uv run ruff check src tests
+
+      - name: Type check with mypy
+        run: uv run mypy src
+
+      - name: Run tests
+        run: uv run pytest --cov=osapow --cov-report=term-missing -v
+
   test-prompt-assembly:
     runs-on: ubuntu-24.04
     steps:

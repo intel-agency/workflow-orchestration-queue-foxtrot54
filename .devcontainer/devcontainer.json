@@ -1,5 +1,5 @@
 {
-  "name": "workflow-orchestration-queue-foxtrot54",
+  "name": "workflow-orchestration-queue-foxtrot54-devcontainer",
   "image": "ghcr.io/intel-agency/workflow-orchestration-queue-foxtrot54/devcontainer:main-latest",
   "containerEnv": {
     "DOTNET_ROOT": "/usr/share/dotnet"
